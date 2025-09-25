@@ -1,4 +1,4 @@
-import ByteEditor from "/modules/ByteEditor.js";
+import ByteEditor from "../ByteEditor.js";
 import operations from "./operations.js"; // opList
 const bit_extract = (v, pos, size) => ((v >>> pos) & ((1 << size) - 1)) >>> 0;
 // const useImportConstants = false;
