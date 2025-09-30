@@ -1,29 +1,38 @@
-import * as LuauSpec from "./spec.js";
+import { LuauOpcode } from "./spec.js";
+import { forceTypes } from "../utilities.js";
 
-class Instruction {
-	constructor(Bytecode, Value, EncodingKey = 1) { // Bytecode.readu32()
-		this.ClassName = "Instruction";
+export default class Instruction {
+	// Code = 0;
+	OpCode = {};
+	Aux = null;
 
-		this.Code = (Value & 0xFF) * EncodingKey; // EncodingKey ? (Value & 0xFF) * EncodingKey : Value;
+	constructor(Bytecode, Value, EncodingKey /* = 1 */) { // Bytecode.readu32()
+		forceTypes(this, {
+			// Code: Number,
+			OpCode: Object,
+			Aux: Instruction,
+		});
+
+		// this.Code = (Value & 0xFF) * EncodingKey; // EncodingKey ? (Value & 0xFF) * EncodingKey : Value;
 		// this.Code = this.Value & 0xFF;
-		this.OpCode = {};
+		const OpCodeIndex = EncodingKey ? (Value & 0xFF) * EncodingKey : Value;
 
 		if (
-			this.Code < 0 ||
-			this.Code >= LuauSpec.LuauOpcode.LOP__COUNT.Index
+			this.OpCode.Value < 0 ||
+			this.OpCode.Value >= LuauOpcode.LOP__COUNT.Index
 		) {
-			throw new Error(`Invalid opcode ${this.Code}`);
-		}
+			throw new Error(`Invalid opcode ${this.OpCode.Value}`);
+		};
 
-		for (const OpCodeInfo of Object.values(LuauSpec.LuauOpcode)) {
-			if (OpCodeInfo.Index === this.Code) {
-				this.OpCode.Information = OpCodeInfo;
+		for (const OpCodeInfo of Object.values(LuauOpcode)) {
+			if (OpCodeInfo.Index === OpCodeIndex) {
+				this.OpCode = OpCodeInfo;
 				break;
-			}
-		}
+			};
+		};
 
 		// Aux
-		if (this.OpCode.Information.HasAux) {
+		if (this.OpCode.HasAux) {
 			// this.AuxValue = Bytecode.readu32(false);
 			this.Aux = new Instruction(
 				Bytecode,
@@ -45,7 +54,5 @@ class Instruction {
 			LineDefined: 0,
 			Pc: 0,
 		};
-	}
-}
-
-export default Instruction;
+	};
+};
