@@ -1,7 +1,11 @@
 import ByteEditor from '../ByteEditor.js';
 import * as LuauSpec from './spec.js';
 import Instruction from './instruction.js';
-import { applyDefaults } from "/modules/utilities/general.js";
+
+function applyDefaults(object, defaultObject) {
+	if (object == null || typeof object !== "object") object = Object.create(null);
+	return { ...defaultObject, ...object };
+};
 
 function getTypeMapping(Name, Length) {
 	// TODO: Actually implement this
