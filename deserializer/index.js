@@ -1,11 +1,9 @@
 import ByteEditor from '../ByteEditor.js';
-import * as LuauSpec from './spec.js';
+import { LuauBytecodeTag, LuauBytecodeType, LuauBytecodeConstants } from './spec.js';
 import Instruction from './instruction.js';
-
-function applyDefaults(object, defaultObject) {
-	if (object == null || typeof object !== "object") object = Object.create(null);
-	return { ...defaultObject, ...object };
-};
+import ProtoConstructor from "./proto.js";
+import { applyDefaults, forceTypes } from "../utilities.js";
+import Upvalue from '../upvalue.js';
 
 function getTypeMapping(Name, Length) {
 	// TODO: Actually implement this
@@ -17,7 +15,7 @@ export function deserialize(Bytecode, Config = {}) {
 	Config = applyDefaults(Config, {
 		RobloxBytecode: false,
 		EncodingKey: null,
-		VectorContructor: () => { throw new Error("Vector not implemented"); },
+		VectorConstructor: () => { throw new Error("Vector not implemented"); },
 		// _stop_key_overwrite_rblx
 	})
 
@@ -33,11 +31,11 @@ export function deserialize(Bytecode, Config = {}) {
 	}
 
 	if (
-		BytecodeVersion < LuauSpec.LuauBytecodeTag.LBC_VERSION_MIN ||
-		BytecodeVersion > LuauSpec.LuauBytecodeTag.LBC_VERSION_MAX
+		BytecodeVersion < LuauBytecodeTag.LBC_VERSION_MIN ||
+		BytecodeVersion > LuauBytecodeTag.LBC_VERSION_MAX
 	) {
 		throw new Error(
-			`Invalid bytecode version (expected ${LuauSpec.LuauBytecodeTag.LBC_VERSION_MIN}-${LuauSpec.LuauBytecodeTag.LBC_VERSION_MAX}, got ${BytecodeVersion})`
+			`Invalid bytecode version (expected ${LuauBytecodeTag.LBC_VERSION_MIN}-${LuauBytecodeTag.LBC_VERSION_MAX}, got ${BytecodeVersion})`
 		);
 	}
 
@@ -47,44 +45,47 @@ export function deserialize(Bytecode, Config = {}) {
 	if (IsTyped) {
 		TypesVersion = Source.readUint8();
 		if (
-			TypesVersion < LuauSpec.LuauBytecodeTag.LBC_TYPE_VERSION_MIN ||
-			TypesVersion > LuauSpec.LuauBytecodeTag.LBC_TYPE_VERSION_MAX
+			TypesVersion < LuauBytecodeTag.LBC_TYPE_VERSION_MIN ||
+			TypesVersion > LuauBytecodeTag.LBC_TYPE_VERSION_MAX
 		) {
 			throw new Error(
-				`Invalid bytecode type version (expected ${LuauSpec.LuauBytecodeTag.LBC_TYPE_VERSION_MIN}-${LuauSpec.LuauBytecodeTag.LBC_TYPE_VERSION_MAX}, got ${BytecodeVersion})`
+				`Invalid bytecode type version (expected ${LuauBytecodeTag.LBC_TYPE_VERSION_MIN}-${LuauBytecodeTag.LBC_TYPE_VERSION_MAX}, got ${BytecodeVersion})`
 			);
 		}
 	}
 
 	// Strings
 	const StringCount = Source.readVarInt32();
-	const Strings = new Array(StringCount);
+	const Strings = Array.from({ length: StringCount }, () =>
+		Source.readString(Source.readVarInt32())
+	);
 
-	for (let i = 0; i < StringCount; i++) {
-		Strings[i] = Source.readString(Source.readVarInt32());
-	}
-
+	/*
 	function readStringRef() {
+		// Strings[Source.readVarInt32()]
+		/*
 		const Index = Source.readVarInt32();
 		console.log(Strings, Index)
 		return Index !== 0 ? Strings[Index] : null;
 	}
+	*/
 
 	// Userdata
 	const UserdataTypeLimit =
-		LuauSpec.LuauBytecodeType.LBC_TYPE_TAGGED_USERDATA_END -
-		LuauSpec.LuauBytecodeType.LBC_TYPE_TAGGED_USERDATA_BASE;
+		LuauBytecodeType.LBC_TYPE_TAGGED_USERDATA_END -
+		LuauBytecodeType.LBC_TYPE_TAGGED_USERDATA_BASE;
 	const UserdataRemapping = new Array(UserdataTypeLimit).fill(
-		LuauSpec.LuauBytecodeType.LBC_TYPE_USERDATA
+		LuauBytecodeType.LBC_TYPE_USERDATA
 	);
 
 	if (TypesVersion === 3) {
 		let Index = Source.readUint8();
 		while (Index !== 0) {
-			const Name = readStringRef(Source, Strings);
+			const Name = Strings[Source.readVarInt32()];
 			if (Index <= UserdataTypeLimit) {
 				UserdataRemapping[Index] = getTypeMapping(Name, Name.length);
-			}
+			};
+
 			Index = Source.readUint8();
 		}
 	}
@@ -94,7 +95,7 @@ export function deserialize(Bytecode, Config = {}) {
 	const Protos = new Array(ProtoCount);
 
 	for (let i = 0; i < ProtoCount; i++) {
-		const Proto = Protos[i] = {};
+		const Proto = Protos[i] = new ProtoConstructor;
 
 		// Function Header
 		Proto.MaxStackSize = Source.readUint8();
@@ -111,15 +112,9 @@ export function deserialize(Bytecode, Config = {}) {
 				const TypesData = new ByteEditor(Source.readBytes(Proto.TypeSize).buffer);
 
 				if (TypesVersion === 1) {
-					if (Proto.TypeSize !== 2 + Proto.ParameterCount) {
-						throw new Error('Type size mismatch');
-					}
-					if (TypesData.readUint8() !== LuauSpec.LuauBytecodeType.LBC_TYPE_FUNCTION) {
-						throw new Error('Invalid function type');
-					}
-					if (TypesData.readUint8() !== Proto.ParameterCount) {
-						throw new Error('Parameter count mismatch');
-					}
+					if (Proto.TypeSize !== 2 + Proto.ParameterCount) throw new Error('Type size mismatch');
+					if (TypesData.readUint8() !== LuauBytecodeType.LBC_TYPE_FUNCTION) throw new Error('Invalid function type');
+					if (TypesData.readUint8() !== Proto.ParameterCount) throw new Error('Parameter count mismatch');
 
 					const HeaderSize = Proto.TypeSize > 127 ? 4 : 3;
 
@@ -153,7 +148,7 @@ export function deserialize(Bytecode, Config = {}) {
 							for (let i = 0; i < Proto.UserdataInfo.TypeSize - 2; i++) {
 								const ByteValue = TypesBuffer.getUint8(TypesBuffer.byteOffset); // false
 								const Index =
-									ByteValue - LuauSpec.LuauBytecodeType.LBC_TYPE_TAGGED_USERDATA_BASE;
+									ByteValue - LuauBytecodeType.LBC_TYPE_TAGGED_USERDATA_BASE;
 
 								if (Index >= 0 && Index < UserdataTypeLimit) {
 									TypesBuffer.setUint8(TypesBuffer.byteOffset, UserdataRemapping[Index]);
@@ -169,7 +164,7 @@ export function deserialize(Bytecode, Config = {}) {
 							for (let i = 0; i < Proto.UserdataInfo.UpvalueCount; i++) {
 								const ByteValue = UpvalueBuffer.getUint8(UpvalueBuffer.byteOffset);
 								const Index =
-									ByteValue - LuauSpec.LuauBytecodeType.LBC_TYPE_TAGGED_USERDATA_BASE;
+									ByteValue - LuauBytecodeType.LBC_TYPE_TAGGED_USERDATA_BASE;
 
 								if (Index >= 0 && Index < UserdataTypeLimit) {
 									UpvalueBuffer.setUint8(UpvalueBuffer.byteOffset, UserdataRemapping[Index]);
@@ -183,7 +178,7 @@ export function deserialize(Bytecode, Config = {}) {
 							for (let i = 0; i < Proto.UserdataInfo.LocalCount; i++) {
 								const ByteValue = Proto.TypeInfo.getUint8(Proto.TypeInfo.byteOffset);
 								const Index =
-									ByteValue - LuauSpec.LuauBytecodeType.LBC_TYPE_TAGGED_USERDATA_BASE;
+									ByteValue - LuauBytecodeType.LBC_TYPE_TAGGED_USERDATA_BASE;
 
 								if (Index >= 0 && Index < UserdataTypeLimit) {
 									Proto.TypeInfo.setUint8(Proto.TypeInfo.byteOffset, UserdataRemapping[Index]);
@@ -206,38 +201,33 @@ export function deserialize(Bytecode, Config = {}) {
 		}
 
 		// Instructions
-		Proto.InstructionCount = Source.readVarInt32();
-		Proto.Instructions = new Array(Proto.InstructionCount);
+		const InstructionCount = Source.readVarInt32();
+		Proto.Instructions = new Array(InstructionCount);
 
-		let SkipAuxInstruction = false;
-
-		for (let i = 0; i < Proto.InstructionCount; i++) {
-			if (SkipAuxInstruction) {
-				SkipAuxInstruction = false;
-				continue;
-			}
-
-			const ins = new Instruction(Bytecode, Source.readUint32(true), Config.EncodingKey); // >>> 0
-
-			if (ins.Aux) {
-				if (i + 1 < Proto.InstructionCount) {
-					Proto.Instructions[i + 1] = ins.Aux;
-				}
-				SkipAuxInstruction = true;
-			}
-
+		for (let i = 0; i < InstructionCount; i++) {
+			const ins = new Instruction(Source, Source.readUint32(true), Config.EncodingKey); // >>> 0
 			Proto.Instructions[i] = ins;
+
+			if (ins.Aux && i + 1 < InstructionCount) {
+				Proto.Instructions[++i] = ins.Aux;
+			}
 		}
 
 		// Constants
-		Proto.ConstantCount = Source.readVarInt32();
-		Proto.Constants = new Array(Proto.ConstantCount);
+		const ConstantCount = Source.readVarInt32();
+		Proto.Constants = new Array(ConstantCount);
 
 		class Import {
+			Names = [];
+
 			constructor(ImportID) {
+				forceTypes(this, {
+					Names: Array
+				});
+
 				const Count = ImportID >>> 30;
 
-				this.Names = new Array(Count);
+				// this.Names = new Array(Count);
 				for (let j = 0; j < Count; j++) {
 					const ShiftedConstantIndex = (ImportID >>> (30 - (j + 1) * 10)) & 1023;
 					this.Names[j] = Proto.Constants[ShiftedConstantIndex];
@@ -247,13 +237,18 @@ export function deserialize(Bytecode, Config = {}) {
 
 		function GetConstant(ConstantType) {
 			switch (ConstantType) {
-				case LuauSpec.LuauBytecodeConstants.LBC_CONSTANT_NIL: return undefined;
-				case LuauSpec.LuauBytecodeConstants.LBC_CONSTANT_BOOLEAN: return Source.readBoolean();
-				case LuauSpec.LuauBytecodeConstants.LBC_CONSTANT_NUMBER: return Source.readFloat64(true);
-				case LuauSpec.LuauBytecodeConstants.LBC_CONSTANT_STRING: return Strings[Source.readVarInt32()];
-				case LuauSpec.LuauBytecodeConstants.LBC_CONSTANT_IMPORT: return new Import(Source.readUint32(true));
+				case LuauBytecodeConstants.LBC_CONSTANT_NIL: return undefined;
+				case LuauBytecodeConstants.LBC_CONSTANT_BOOLEAN: return Source.readBoolean();
+				case LuauBytecodeConstants.LBC_CONSTANT_NUMBER: return Source.readFloat64(true);
+				case LuauBytecodeConstants.LBC_CONSTANT_STRING: return Strings[Source.readVarInt32()];
+				case LuauBytecodeConstants.LBC_CONSTANT_IMPORT: return new Import(Source.readUint32(true));
 
-				case LuauSpec.LuauBytecodeConstants.LBC_CONSTANT_TABLE: {
+				case LuauBytecodeConstants.LBC_CONSTANT_TABLE:
+					return Array.from({ length: Source.readVarInt32() }, () =>
+						Proto.Constants[Source.readVarInt32()]
+					);
+				/*
+				{
 					const KeyCount = Source.readVarInt32();
 					const Keys = new Array(KeyCount);
 
@@ -264,16 +259,18 @@ export function deserialize(Bytecode, Config = {}) {
 
 					return Keys;
 				}
+				*/
 
-				case LuauSpec.LuauBytecodeConstants.LBC_CONSTANT_CLOSURE:
-					return Source.readVarInt32();
+				case LuauBytecodeConstants.LBC_CONSTANT_CLOSURE: return Source.readVarInt32();
 
-				case LuauSpec.LuauBytecodeConstants.LBC_CONSTANT_VECTOR: {
-					const x = Source.readFloat64(true);
-					const y = Source.readFloat64(true);
-					const z = Source.readFloat64(true);
-					const w = Source.readFloat64(true);
-					return new Config.VectorContructor(x, y, z, w);
+				case LuauBytecodeConstants.LBC_CONSTANT_VECTOR: {
+					const
+						x = Source.readFloat64(true),
+						y = Source.readFloat64(true),
+						z = Source.readFloat64(true),
+						w = Source.readFloat64(true);
+
+					return Config.VectorConstructor(x, y, z, w);
 				}
 
 				default:
@@ -282,77 +279,67 @@ export function deserialize(Bytecode, Config = {}) {
 		}
 
 		// Usage
-		for (let ConstantIndex = 0; ConstantIndex < Proto.ConstantCount; ConstantIndex++) {
+		for (let ConstantIndex = 0; ConstantIndex < ConstantCount; ConstantIndex++) {
 			const ConstantType = Source.readUint8();
 			Proto.Constants[ConstantIndex] = GetConstant(ConstantType);
 		}
 
 
 		// Protos (Functions)
-		Proto.ProtoCount = Source.readVarInt32();
-		Proto.Protos = new Array(Proto.ProtoCount);
+		const ProtoCount = Source.readVarInt32();
+		Proto.Protos = new Array(ProtoCount);
 
-		for (let i = 0; i < Proto.ProtoCount; i++) {
-			const fid = Source.readVarInt32();
-			Proto.Protos[i] = Protos[fid];
-		}
+		for (let i = 0; i < ProtoCount; i++) {
+			Proto.Protos[i] = Protos[Source.readVarInt32()]; // fid
+		};
 
 		// Proto Extra Information
 		Proto.LineDefined = Source.readVarInt32();
 		Proto.LastLineDefined = 0;
-		Proto.Name = readStringRef();
+		Proto.Name = Strings[Source.readVarInt32()];
 
 		// Instruction Line Information
 		Proto.HasLineInfo = Source.readBoolean();
 
 		if (Proto.HasLineInfo) {
 			const LineGapLog2 = Source.readUint8();
-			const Intervals = ((Proto.InstructionCount - 1) >>> LineGapLog2) + 1;
-
-			const LineInfo = new Array(Proto.InstructionCount);
-			const AbsLineInfo = new Array(Intervals);
+			const Intervals = ((InstructionCount - 1) >>> LineGapLog2) + 1;
 
 			let LastOffset = 0;
+			const LineInfo = Array.from({ length: InstructionCount }, () =>
+				LastOffset = (LastOffset + Source.readUint8()) & 0xFF
+			);
+
 			let LastLine = 0;
+			const AbsLineInfo = Array.from({ length: Intervals }, () =>
+				LastLine += Source.readInt32(true)
+			);
 
-			for (let i = 0; i < Proto.InstructionCount; i++) {
-				LastOffset = (LastOffset + Source.readUint8()) & 0xff;
-				LineInfo[i] = LastOffset;
-			}
+			Proto.Instructions.forEach(function (instruction, pc) {
+				const IntervalIndex = pc >>> LineGapLog2;
+				const
+					BaseLine = AbsLineInfo[IntervalIndex] || 0,
+					Offset = LineInfo[pc] || 0;
 
-			for (let i = 0; i < Intervals; i++) {
-				LastLine += Source.readInt32(true);
-				AbsLineInfo[i] = LastLine;
-			}
+				const Context = instruction.Context ??= {};
+				Context.LineDefined = BaseLine + Offset;
+				Context.Pc = pc;
+			});
 
-			for (let pc = 0; pc < Proto.Instructions.length; pc++) {
-				const instruction = Proto.Instructions[pc];
-				if (!instruction.Context) {
-					instruction.Context = {};
-				}
-				const intervalIndex = pc >>> LineGapLog2;
-				const baseLine = AbsLineInfo[intervalIndex] || 0;
-				const offset = LineInfo[pc] || 0;
-				instruction.Context.LineDefined = baseLine + offset;
-				// now zero-based Pc
-				instruction.Context.Pc = pc;
-			}
+			Proto.LastLineDefined = Proto.Instructions.at(-1)?.Context.LineDefined;
 
-			if (Proto.Instructions.length > 0) {
-				Proto.LastLineDefined =
-					Proto.Instructions[Proto.InstructionCount - 1].Context.LineDefined;
-			}
+			// if (Proto.Instructions.length > 0) // [InstructionCount - 1]
 		}
 
 		// Debug Information
 		Proto.HasDebugInfo = Source.readBoolean();
 
 		if (Proto.HasDebugInfo) {
-			Proto.LocalVariableCount = Source.readVarInt32();
-			Proto.LocalVariables = new Array(Proto.LocalVariableCount);
+			const LocalVariableCount = Source.readVarInt32();
+			Proto.LocalVariables = new Array(LocalVariableCount);
 
-			for (let i = 0; i < Proto.LocalVariableCount; i++) {
-				const Name = readStringRef();
+			for (let i = 0; i < LocalVariableCount; i++) {
+				const Name = Strings[Source.readVarInt32()];
 				const StartPc = Source.readVarInt32();
 				const EndPc = Source.readVarInt32();
 				const Register = Source.readUint8();
@@ -360,13 +347,11 @@ export function deserialize(Bytecode, Config = {}) {
 				Proto.LocalVariables[i] = { Name, StartPc, EndPc, Register };
 			}
 
-			Proto.DebugUpvalueCount = Source.readVarInt32();
-			Proto.Upvalues = new Array(Proto.DebugUpvalueCount);
+			const DebugUpvalueCount = Source.readVarInt32();
+			Proto.Upvalues = new Array(DebugUpvalueCount);
 
-			for (let i = 0; i < Proto.DebugUpvalueCount; i++) {
-				Proto.Upvalues[i] = {
-					Name: readStringRef()
-				};
+			for (let i = 0; i < DebugUpvalueCount; i++) {
+				Proto.Upvalues[i] = new Upvalue(Strings[Source.readVarInt32()]);
 			}
 		}
 	}
