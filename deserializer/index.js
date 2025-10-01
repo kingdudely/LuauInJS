@@ -14,7 +14,7 @@ function getTypeMapping(Name, Length) {
 export function deserialize(Bytecode, Config = {}) {
 	Config = applyDefaults(Config, {
 		RobloxBytecode: false,
-		EncodingKey: null,
+		EncodingKey: 1, // null
 		VectorConstructor: () => { throw new Error("Vector not implemented"); },
 		// _stop_key_overwrite_rblx
 	})
@@ -296,7 +296,7 @@ export function deserialize(Bytecode, Config = {}) {
 		// Proto Extra Information
 		Proto.LineDefined = Source.readVarInt32();
 		Proto.LastLineDefined = 0;
-		Proto.Name = Strings[Source.readVarInt32()];
+		Proto.Name = Strings[Source.readVarInt32()]; // ?? ""
 
 		// Instruction Line Information
 		Proto.HasLineInfo = Source.readBoolean();
