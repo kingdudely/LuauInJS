@@ -6,7 +6,7 @@ export default class Instruction {
 	OpCode = {};
 	Aux = null;
 
-	constructor(Bytecode, Value, EncodingKey /* = 1 */) { // Bytecode.readu32()
+	constructor(Bytecode, Value, EncodingKey = 1) { // Bytecode.readu32()
 		forceTypes(this, {
 			// Code: Number,
 			OpCode: Object,
@@ -15,13 +15,13 @@ export default class Instruction {
 
 		// this.Code = (Value & 0xFF) * EncodingKey; // EncodingKey ? (Value & 0xFF) * EncodingKey : Value;
 		// this.Code = this.Value & 0xFF;
-		const OpCodeIndex = EncodingKey ? (Value & 0xFF) * EncodingKey : Value;
+		const OpCodeIndex = (Value & 0xFF) * EncodingKey; // ?? 1
 
 		if (
-			this.OpCode.Value < 0 ||
-			this.OpCode.Value >= LuauOpcode.LOP__COUNT.Index
+			OpCodeIndex < 0 ||
+			OpCodeIndex >= LuauOpcode.LOP__COUNT.Index
 		) {
-			throw new Error(`Invalid opcode ${this.OpCode.Value}`);
+			throw new Error(`Invalid opcode ${OpCodeIndex}`);
 		};
 
 		for (const OpCodeInfo of Object.values(LuauOpcode)) {
