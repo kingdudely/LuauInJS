@@ -1,17 +1,20 @@
-import { applyDefaults } from "/modules/utilities/general.js";
 const textEncoder = new TextEncoder();
 const wasmLocation = import.meta.resolve('./module.wasm');
 
 const instantiated = await WebAssembly.instantiateStreaming(fetch(wasmLocation), {
 	env: {
-		__cxa_throw: ptr => { throw new Error(`__cxa_throw (ptr=${ptr})`); },
+		__cxa_throw(ptr) {
+			throw new Error(`__cxa_throw (ptr=${ptr})`);
+		},
 		__cxa_begin_catch: ptr => ptr,
-		__cxa_end_catch: () => { },
+		__cxa_end_catch() {},
 		__cxa_find_matching_catch_3: () => 0,
-		_abort_js: msg => { throw new WebAssembly.RuntimeError('abort: ' + msg); },
-		_emscripten_runtime_keepalive_clear: () => { },
+		_abort_js(msg) {
+			throw new WebAssembly.RuntimeError('abort: ' + msg);
+		},
+		_emscripten_runtime_keepalive_clear() {},
 		_setitimer_js: () => 0,
-		emscripten_resize_heap: (requestedSize) => {
+		emscripten_resize_heap(requestedSize) {
 			const old = memory.buffer.byteLength;
 			const pagesNeeded = Math.ceil((requestedSize - old) / Math.pow(2, 16));
 			if (pagesNeeded <= 0) return 1;
@@ -29,7 +32,9 @@ const instantiated = await WebAssembly.instantiateStreaming(fetch(wasmLocation),
 	},
 
 	wasi_snapshot_preview1: {
-		proc_exit: code => { throw new WebAssembly.RuntimeError(`Return code ${code}`); } // ExitStatus
+		proc_exit(code) {
+			throw new WebAssembly.RuntimeError(`Return code ${code}`); // ExitStatus
+		},
 	}
 });
 
@@ -44,13 +49,11 @@ function getHeap(arrayType) {
 }
 
 function write_cstring(value) {
-	const HEAPU8 = getHeap(Uint8Array);
-
 	value += "\0";
 	const encoded = textEncoder.encode(value);
 	const ptr = malloc(encoded.length);
 
-	HEAPU8.set(encoded, ptr);
+	getHeap(Uint8Array).set(encoded, ptr);
 	return ptr;
 	/*
 	const encoded = textEncoder.encode(value);
@@ -65,64 +68,42 @@ function write_cstring(value) {
 function write_cstrings(strings) {
 	if (strings.length <= 0) return 0;
 
-	const HEAP32 = getHeap(Int32Array);
 	const array_ptr = malloc((strings.length + 1) * 4); // add 1 for null terminator
 	const array_base = (array_ptr >> 2);
 
 	for (let i = 0; i < strings.length; i++) { // += 1
-		HEAP32[array_base + i] = write_cstring(strings[i]);
+		getHeap(Int32Array)[array_base + i] = write_cstring(strings[i]);
 	}
 
-	HEAP32[array_base + strings.length] = 0; // null terminate
+	getHeap(Int32Array)[array_base + strings.length] = 0; // null terminate
 	return array_ptr;
 };
 
 function free_array(pointer) {
-	const HEAP32 = getHeap(Int32Array);
 	let address = pointer >> 2;
-	while (HEAP32[address] !== 0) free(HEAP32[address++]);
+	while (getHeap(Int32Array)[address] !== 0) free(getHeap(Int32Array)[address++]);
 	free(pointer);
 };
 
-const OptionOrder = [ // Respective
-	"OptimizationLevel",
-	"DebugLevel",
-	"TypeInfoLevel",
-	"CoverageLevel",
-	"VectorLibName",
-	"VectorLibConstructor",
-	"VectorType",
-	"MutableGlobals",
-	"UserdataTypes",
-	"LibrariesWithKnownMembers",
-	"LibraryMemberTypeCb",
-	"LibraryMemberConstantCb",
-	"DisabledBuiltins",
+const OptionEntries = [
+	["OptimizationLevel", 1],
+	["DebugLevel", 1],
+	["TypeInfoLevel", 1],
+	["CoverageLevel", 1],
+	["VectorLibName", "vector"],
+	["VectorLibConstructor", "create"],
+	["VectorType", "vector"],
+	["MutableGlobals", []],
+	["UserdataTypes", 0],
+	["LibrariesWithKnownMembers", 0],
+	["LibraryMemberTypeCb", 0],
+	["LibraryMemberConstantCb", 0],
+	["DisabledBuiltins", []]
 ];
-const OptionAmount = OptionOrder.length;
+const OptionAmount = OptionEntries.length;
 // export const CompileOptions
 
-export default function (Source, Options) {
-	Options = applyDefaults(Options, {
-		"OptimizationLevel": 1,
-		"DebugLevel": 1,
-		"TypeInfoLevel": 1,
-		"CoverageLevel": 1,
-		"VectorLibName": "vector",
-		"VectorLibConstructor": "create",
-		"VectorType": "vector",
-		"MutableGlobals": [],
-		"UserdataTypes": 0,
-		"LibrariesWithKnownMembers": 0,
-		"LibraryMemberTypeCb": 0,
-		"LibraryMemberConstantCb": 0,
-		"DisabledBuiltins": []
-	});
-
-	const
-		HEAPU8 = getHeap(Uint8Array),
-		HEAP32 = getHeap(Int32Array);
-
+export default function (Source, Options = {}) {
 	const
 		option_ptr = malloc(OptionAmount * 4),
 		option_base = option_ptr >> 2; // option_base_ptr
@@ -132,16 +113,16 @@ export default function (Source, Options) {
 		arrayPointers = [];
 
 	for (let i = 0; i < OptionAmount; i++) {
-		const optionName = OptionOrder[i];
-		let optionValue = Options[optionName];
+		const [OptionName, DefaultOptionValue] = OptionEntries[i];
+		let OptionValue = Options?.[OptionName] ?? DefaultOptionValue;
 
-		switch (optionValue?.constructor) {
+		switch (OptionValue?.constructor) {
 			// What about number
-			case String: optionValue = pointers[pointers.length] = write_cstring(optionValue); break;
-			case Array: optionValue = arrayPointers[arrayPointers.length] = write_cstrings(optionValue); break;
+			case String: OptionValue = pointers[pointers.length] = write_cstring(OptionValue); break;
+			case Array: OptionValue = arrayPointers[arrayPointers.length] = write_cstrings(OptionValue); break;
 		};
 
-		HEAP32[option_base + i] = optionValue;
+		getHeap(Int32Array)[option_base + i] = OptionValue;
 	};
 
 	const src_ptr = pointers[pointers.length] = write_cstring(Source);
@@ -149,11 +130,11 @@ export default function (Source, Options) {
 
 	const
 		bytecode_ptr = pointers[pointers.length] = luau_compile(src_ptr, Source.length, option_ptr, bc_size_ptr),
-		bytecode_size = HEAP32[bc_size_ptr >> 2],
-		bytecode = HEAPU8.slice(bytecode_ptr, bytecode_ptr + bytecode_size);
+		bytecode_size = getHeap(Int32Array)[bc_size_ptr >> 2],
+		bytecode = getHeap(Uint8Array).slice(bytecode_ptr, bytecode_ptr + bytecode_size);
 
 	pointers.forEach(free);
 	arrayPointers.forEach(free_array);
 
 	return bytecode.buffer;
-}
+};
