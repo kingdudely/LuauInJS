@@ -3,7 +3,7 @@ const
 	textEncoder = new TextEncoder(); // Always UTF-8
 
 const
-	zigzagDecode = x => (x >> x?.constructor(1)) ^ (-(x & x?.constructor(1))),
+	zigzagDecode = x => ((x >> x?.constructor(1)) ^ (-(x & x?.constructor(1)))) >>> 0,
 	zigzagEncode = (x, bitSize) => (x << x?.constructor(1)) ^ (x >> x?.constructor(bitSize - 1)); // byteSize, x * 8
 
 function constructorFromArrayType(arrayType) {
@@ -41,20 +41,16 @@ function encodeRobloxFloat(x) {
 
 // alloc
 export default class ByteEditor extends DataView {
-	byteIndex = 0;
+	byteOffset = 0; // byteIndex
 
-	constructor(buffer = new ArrayBuffer(0, { maxByteLength: 2 ** 31 - 1 }), ...args) {
-		super(buffer, ...args);
+	constructor(buffer = new ArrayBuffer(0, { maxByteLength: 2 ** 31 - 1 })) {
+		super(buffer);
 		this.automaticResizing = buffer.resizable;
 	};
 
 	get bytesLeft() {
-		return this.byteLength - this.byteIndex;
+		return this.byteLength - this.byteOffset;
 	};
-
-	get absoluteIndex() {
-		return this.byteOffset + this.byteIndex
-	}
 
 	#readInterleaved(length, arrayType) { // deinterleave, uninterleave, byteAmount?
 		const constructor = constructorFromArrayType(arrayType);
@@ -64,13 +60,13 @@ export default class ByteEditor extends DataView {
 			bitsPerByte = constructor(8);
 
 		const
-			startOffset = this.byteIndex,
+			startOffset = this.byteOffset,
 			endOffset = length * byteSize;
 
 		return arrayType.from({ length }, (_, i) => {
 			let value = constructor(0);
 
-			for (let byteIndex = 0; byteIndex < byteSize; byteIndex++) {
+			for (let byteIndex = 0; byteIndex < byteSize; byteIndex++, this.byteOffset++) {
 				const
 					offset = startOffset + ((i + length * byteIndex) % endOffset),
 					byte = super.getUint8(offset);
@@ -78,8 +74,6 @@ export default class ByteEditor extends DataView {
 				// value = (value << byteSize) | constructor(byte);
 				value <<= bitsPerByte;
 				value |= constructor(byte);
-
-				this.move(1); // Remove?
 			};
 
 			return value;
@@ -87,10 +81,6 @@ export default class ByteEditor extends DataView {
 	};
 
 	#writeInterleaved(values, arrayType) {
-		if (!ArrayBuffer.isView(arrayType)) {
-			throw new Error("Invalid array type");
-		};
-
 		const constructor = constructorFromArrayType(arrayType);
 
 		const
@@ -101,33 +91,28 @@ export default class ByteEditor extends DataView {
 		const { length } = values;
 
 		const
-			startOffset = this.byteIndex,
+			startOffset = this.byteOffset,
 			endOffset = length * byteSize;
 
 		for (let i = 0; i < length; i++) {
 			let value = values[i];
 
-			for (let byteIndex = byteSize - 1; byteIndex >= 0; byteIndex--) {
+			for (let byteIndex = byteSize - 1; byteIndex >= 0; byteIndex--, this.byteOffset++) {
 				const
 					offset = startOffset + ((i + length * byteIndex) % endOffset),
 					byte = Number(value & byteMask);
 
 				super.setUint8(offset, byte);
 				value >>= bitsPerByte;
-
-				this.move(1);
 			};
 		};
 	};
 
-	move(offset) {
-		this.byteIndex += offset;
-		return this;
-	}
+	set(source, offset = 0, length = Math.min(this.bytesLeft, source.byteLength - offset)) {
+		new Uint8Array(this.buffer, this.byteOffset, length)
+			.set(new Uint8Array(source, offset, length));
 
-	goto(offset) {
-		this.byteIndex = offset;
-		return this;
+		this.byteOffset += length;
 	}
 
 	readBytes(length) {
@@ -273,18 +258,19 @@ for (const [dataName, { BYTES_PER_ELEMENT: byteSize }] of Object.entries(arrayTy
 
 		if (typeof DataViewFunction === "function") {
 			ByteEditorPrototype[byteEditorPrefix + dataName] = function (...args) {
-				const { automaticResizing, absoluteIndex } = this;
+				const { automaticResizing, byteOffset } = this;
 				if (automaticResizing) {
-					this.buffer.resize(absoluteIndex + byteSize);
+					this.buffer.resize(byteOffset + byteSize);
 				}; // else if
 
-				const { byteOffset, byteIndex, byteLength } = this;
-				if (byteIndex + byteSize > byteLength) {
-					throw new RangeError(`Attempt to read beyond buffer length: offset ${byteOffset}, index ${byteIndex}, size ${byteSize}, length ${byteLength}`);
+				const { byteLength } = this;
+				if (byteOffset + byteSize > byteLength) {
+					throw new RangeError(`Attempt to read beyond buffer length: offset ${byteOffset}, size ${byteSize}, length ${byteLength}`);
 				};
 
-				this.move(byteSize);
-				return DataViewFunction.call(this, absoluteIndex, ...args);
+				const value = DataViewFunction.call(this, this.byteOffset, ...args);
+				this.byteOffset += byteSize;
+				return value;
 			};
 		};
 	};
@@ -292,70 +278,3 @@ for (const [dataName, { BYTES_PER_ELEMENT: byteSize }] of Object.entries(arrayTy
 	DataViewToNewByteEditorFunction("get", "read");
 	DataViewToNewByteEditorFunction("set", "write");
 };
-
-/*
-getInterleavedUint32(length) {
-	const result = new Uint32Array(length);
-	const startOffset = this.byteIndex;
-	const
-		length2 = length * 2,
-		length3 = length * 3,
-		length4 = length * 4;
-
-	for (let i = 0; i < length; i++) {
-		const
-			byte0 = super.getUint8(startOffset + i),
-			byte1 = super.getUint8(startOffset + ((i + length) % length4)),
-			byte2 = super.getUint8(startOffset + ((i + length2) % length4)),
-			byte3 = super.getUint8(startOffset + ((i + length3) % length4));
-
-		result[i] =
-			(byte0 << 24) +
-			(byte1 << 16) +
-			(byte2 << 8) +
-			byte3;
-	}
-
-	this.move(length4);
-	return result;
-}
-
-readInterleavedUint64(length) {
-	const result = new BigUint64Array(length);
-	const startOffset = this.byteIndex;
-
-	const
-		length2 = length * 2,
-		length3 = length * 3,
-		length4 = length * 4,
-		length5 = length * 5,
-		length6 = length * 6,
-		length7 = length * 7,
-		length8 = length * 8;
-
-	for (let i = 0; i < length; i++) {
-		const
-			byte0 = BigInt(super.getUint8(startOffset + i)),
-			byte1 = BigInt(super.getUint8(startOffset + ((i + length) % length8))),
-			byte2 = BigInt(super.getUint8(startOffset + ((i + length2) % length8))),
-			byte3 = BigInt(super.getUint8(startOffset + ((i + length3) % length8))),
-			byte4 = BigInt(super.getUint8(startOffset + ((i + length4) % length8))),
-			byte5 = BigInt(super.getUint8(startOffset + ((i + length5) % length8))),
-			byte6 = BigInt(super.getUint8(startOffset + ((i + length6) % length8))),
-			byte7 = BigInt(super.getUint8(startOffset + ((i + length7) % length8)));
-
-		result[i] =
-			(byte0 << 56n) +
-			(byte1 << 48n) +
-			(byte2 << 40n) +
-			(byte3 << 32n) +
-			(byte4 << 24n) +
-			(byte5 << 16n) +
-			(byte6 << 8n) +
-			byte7;
-	}
-
-	this.move(length8);
-	return result;
-}
-*/
