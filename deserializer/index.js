@@ -80,7 +80,7 @@ export default function (bytecode, vectorConstructor = () => { throw new Error("
 	};
 
 	function checkkmode(inst, k) {
-		const { kmode, aux, C, D, K0, K1, K2 } = inst;
+		const { kmode, aux, B, C, D } = inst;
 		switch (kmode) {
 			case 1: inst.K = k[aux]; break; // AUX
 			case 2: inst.K = k[C]; break; // C
@@ -164,7 +164,7 @@ export default function (bytecode, vectorConstructor = () => { throw new Error("
 		if (luauVersion >= 4) {
 			editor.readUint8(); // flags
 			const typesize = editor.readVarInt32();
-			editor.move(typesize); // skip typesize bytes
+			editor.byteOffset += typesize; // skip typesize bytes
 		}
 
 		const sizecode = editor.readVarInt32();
