@@ -184,25 +184,25 @@ export function newclosure(protoList, protoIndex, globals = {}, upvals = []) {
 					*/
 				}
 
-				case 13: stack[A] = stack[B][stack[C]]; break; // GETTABLE
-				case 14: stack[B][stack[C]] = stack[A]; break; // SETTABLE
+				case 13: stack[A] = stack[B].get(stack[C]); break; // GETTABLE
+				case 14: stack[B].set(stack[C], stack[A]); break; // SETTABLE
 
 				case 15: { // GETTABLEKS
 					// index = K
-					stack[A] = stack[B][K];
+					stack[A] = stack[B].get(K);
 					pc++;
 					break;
 				}
 
 				case 16: { // SETTABLEKS
 					// index = K
-					stack[B][K] = stack[A];
+					stack[B].set(K, stack[A]);
 					pc++;
 					break;
 				}
 
-				case 17: stack[A] = stack[B][C + 1]; break; // GETTABLEN
-				case 18: stack[B][C + 1] = stack[A]; break; // SETTABLEN
+				case 17: stack[A] = stack[B].get(C + 1); break; // GETTABLEN
+				case 18: stack[B].set(C + 1, stack[A]); break; // SETTABLEN
 
 				case 19: { // NEWCLOSURE
 					// protos array holds indices into protoList; inst.D is the proto index
@@ -300,14 +300,7 @@ export function newclosure(protoList, protoIndex, globals = {}, upvals = []) {
 				case 52: stack[A] = stack[B].length; break; // LENGTH // ?.length
 
 				case 53: { // NEWTABLE
-					const table = Object.create(null);
-					table[Symbol.iterator] = function* () {
-						console.log(table)
-						for (const entry of Object.entries(table)) { // this
-							yield luauVarargs(entry);
-						};
-					};
-
+					const table = new Map();
 					stack[A] = table; // new Array(aux); (todo)
 					pc++;
 					break;
@@ -315,9 +308,9 @@ export function newclosure(protoList, protoIndex, globals = {}, upvals = []) {
 
 				case 54: { // DUPTABLE
 					// template = K
-					const serialized = Object.create(null); // {}
+					const serialized = new Map(); // {}
 					for (const ID of Object.values(K)) { // id of K
-						serialized[constants[ID]] = undefined; // null
+						serialized.set(constants[ID]); // null, undefined
 					};
 
 					stack[A] = serialized;
@@ -333,7 +326,7 @@ export function newclosure(protoList, protoIndex, globals = {}, upvals = []) {
 					// table_move(stack, B, B + c - 1, inst.aux, stack[A])
 					const list = stack[A];
 					for (let i = 0; i < count; i++) {
-						list[aux + i] = stack[B + i];
+						list.set(aux + i, stack[B + i]);
 					};
 
 					pc++;
@@ -341,6 +334,7 @@ export function newclosure(protoList, protoIndex, globals = {}, upvals = []) {
 				}
 
 				case 56: { // FORNPREP
+					// window.isNaN
 					const limit = stack[A] = Number(stack[A]);
 					if (Number.isNaN(limit)) throw new LuauError("invalid 'for' limit (number expected)");
 
@@ -495,7 +489,7 @@ export function newclosure(protoList, protoIndex, globals = {}, upvals = []) {
 				case 75: pc++; break; // FASTCALL2K
 
 				case 76: { // FORGPREP // luau_settings.generalizedIteration
-					const { [Symbol.iterator]: iterator } = stack[A];
+					const iterator = stack[A][Symbol.iterator].bind(stack[A]);
 
 					if (iterator == null || typeof iterator !== "function") {
 						throw new TypeError("invalid generalized iterator ([Symbol.iterator] is not a function)");
