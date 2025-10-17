@@ -220,7 +220,7 @@ export default function (bytecode, vectorConstructor = () => { throw new Error("
 
 		const linedefined = editor.readVarInt32();
 		const debugnameindex = editor.readVarInt32();
-		const debugname = debugnameindex !== 0 ? stringList[debugnameindex - 1] : "(??)";
+		const debugname = debugnameindex !== 0 ? stringList[debugnameindex - 1] : ""; // (??)
 
 		// lineinfo
 		const lineinfoenabled = editor.readBoolean(); // editor.readUint8() !== 0;
@@ -307,7 +307,7 @@ export default function (bytecode, vectorConstructor = () => { throw new Error("
 		throw new Error("deserializer cursor position mismatch");
 	}
 
-	protoList[mainProtoIndex].debugname = "(main)";
+	// protoList[mainProtoIndex].debugname = "(main)";
 
 	return {
 		stringList,
