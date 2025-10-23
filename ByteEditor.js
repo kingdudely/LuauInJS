@@ -3,16 +3,17 @@ const
 	textEncoder = new TextEncoder(); // Always UTF-8
 
 const
-	zigzagDecode = x => ((x >> x?.constructor(1)) ^ (-(x & x?.constructor(1)))) >>> 0,
-	zigzagEncode = (x, bitSize) => (x << x?.constructor(1)) ^ (x >> x?.constructor(bitSize - 1)); // byteSize, x * 8
+	zigzagDecode = x =>
+		typeof x === "bigint"
+			? (x >> 1n) ^ -(x & 1n)
+			: (x >> 1) ^ -(x & 1),
 
-function constructorFromArrayType(arrayType) {
-	if (!ArrayBuffer.isView(arrayType)) {
-		throw new Error("Invalid array type");
-	};
+	zigzagEncode = x =>
+		typeof x === "bigint"
+			? (x << 1n) ^ (x >> 63n)
+			: (x << 1) ^ (x >> 31) >>> 0;
 
-	return [BigInt64Array, BigUint64Array].includes(arrayType) ? BigInt : Number;
-}
+const constructorFromArrayType = arrayType => ([BigInt64Array, BigUint64Array].includes(arrayType) ? BigInt : Number);
 
 function decodeRobloxFloat(x) {
 	const exponent = x >>> 24;
@@ -189,7 +190,7 @@ export default class ByteEditor extends DataView {
 	}
 
 	writeInterleavedInt32(values) {
-		this.writeInterleavedUint32(Uint32Array.from(values, x => zigzagEncode(x, 32) >>> 0));
+		this.writeInterleavedUint32(Uint32Array.from(values, zigzagEncode));
 	}
 
 	readInterleavedInt64(length) {
@@ -197,7 +198,7 @@ export default class ByteEditor extends DataView {
 	}
 
 	writeInterleavedInt64(values) {
-		this.writeInterleavedUint64(BigUint64Array.from(values, x => zigzagEncode(x, 64)));
+		this.writeInterleavedUint64(BigUint64Array.from(values, zigzagEncode));
 	}
 
 	readInterleavedRobloxFloat32(length) {
